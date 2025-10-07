@@ -1,0 +1,14 @@
+{
+    "name": "node-psql-app",
+    "version": "1.0.0",
+    "description": "Simple Node.js app with PostgreSQL",
+    "main": "app.js",
+    "scripts": {
+        "start": "node app.js",
+        "dev": "node app.js"
+    },
+    "dependencies": {
+        "pg": "^8.11.0",
+        "dotenv": "^16.3.1"
+    }
+}
