@@ -1,223 +1,229 @@
 const { Pool } = require("pg");
+const bcrypt = require("bcrypt");
 const dbConfig = require("./config");
 
 const db = new Pool(dbConfig);
 
-const createTable = async () => {
-    console.log("Creating users table...");
+const SALT_ROUNDS = 10;
 
+const createUsersTable = async () => {
     try {
         await db.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        name VARCHAR(100) NOT NULL,
-        email VARCHAR(100) UNIQUE NOT NULL,
-        age INTEGER NOT NULL,
-        city VARCHAR(50) NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-        console.log("Table created successfully");
+            CREATE TABLE IF NOT EXISTS auth_users (
+                id SERIAL PRIMARY KEY,
+                login VARCHAR(100) UNIQUE NOT NULL,
+                password_hash VARCHAR(255) NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
     } catch (error) {
-        console.error("Error creating table:", error.message);
+        throw error;
     }
 };
 
-const insertUsers = async () => {
-    console.log("Inserting users...");
-
-    const users = [
-        { name: "Иван Петров", email: "ivan@mail.ru", age: 25, city: "Москва" },
-        {
-            name: "Анна Сидорова",
-            email: "anna@gmail.com",
-            age: 30,
-            city: "Санкт-Петербург",
-        },
-        {
-            name: "Алексей Козлов",
-            email: "alex@yandex.ru",
-            age: 28,
-            city: "Москва",
-        },
-        {
-            name: "Мария Новикова",
-            email: "maria@outlook.com",
-            age: 22,
-            city: "Казань",
-        },
-        {
-            name: "Дмитрий Волков",
-            email: "dmitry@rambler.ru",
-            age: 35,
-            city: "Екатеринбург",
-        },
-    ];
-
-    for (const user of users) {
-        try {
-            await db.query(
-                "INSERT INTO users (name, email, age, city) VALUES ($1, $2, $3, $4) ON CONFLICT (email) DO NOTHING",
-                [user.name, user.email, user.age, user.city]
-            );
-            console.log(`User ${user.name} inserted`);
-        } catch (error) {
-            console.error(`Error inserting user ${user.name}:`, error.message);
+/**
+ * Регистрация нового пользователя
+ * @param {string} login - Имя пользователя
+ * @param {string} password - Пароль в открытом виде
+ * @returns {Promise<Object|null>} Данные созданного пользователя или null
+ */
+const registerUser = async (login, password) => {
+    try {
+        if (!login || !password) {
+            console.log(" Ошибка: логин и пароль не могут быть пустыми");
+            return null;
         }
+
+        // Хеширование пароля с солью и итерациями
+        // bcrypt автоматически:
+        // - Генерирует случайную соль
+        // - Выполняет указанное количество итераций (SALT_ROUNDS)
+        // - Сохраняет соль внутри хеша
+        const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
+
+        // Использование параметризованного запроса ($1, $2)
+        // для защиты от SQL-инъекций
+        const result = await db.query(
+            `INSERT INTO auth_users (login, password_hash) 
+             VALUES ($1, $2) 
+             RETURNING id, login, created_at`,
+            [login, passwordHash]
+        );
+
+        const user = result.rows[0];
+        console.log(`  Пользователь успешно зарегистрирован`);
+        console.log(`  ID: ${user.id}`);
+        console.log(`  Логин: ${user.login}`);
+        console.log(`  Создан: ${user.created_at}`);
+
+        return user;
+    } catch (error) {
+        if (error.code === "23505") {
+            // Код ошибки PostgreSQL для нарушения уникальности
+            console.log(` Пользователь с логином "${login}" уже существует`);
+        } else {
+            console.error(" Ошибка при регистрации:", error.message);
+        }
+        return null;
     }
 };
 
-const getAllUsers = async () => {
-    console.log("\nAll users:");
+/**
+ * Аутентификация пользователя
+ * @param {string} login - Имя пользователя
+ * @param {string} password - Пароль в открытом виде
+ * @returns {Promise<boolean>} true если аутентификация успешна, false в противном случае
+ */
+const authenticateUser = async (login, password) => {
+    console.log("-".repeat(50));
+
+    try {
+        // Проверка на пустые значения
+        if (!login || !password) {
+            console.log(" Ошибка: логин и пароль не могут быть пустыми");
+            return false;
+        }
+
+        // Использование параметризованного запроса для защиты от SQL-инъекций
+        // $1 заменяется на значение login безопасным способом
+        const result = await db.query(
+            `SELECT id, login, password_hash, created_at 
+             FROM auth_users 
+             WHERE login = $1`,
+            [login]
+        );
+
+        if (result.rows.length === 0) {
+            console.log(" Пользователь не найден");
+            return false;
+        }
+
+        const user = result.rows[0];
+
+        // bcrypt.compare автоматически:
+        // - Извлекает соль из сохраненного хеша
+        // - Хеширует введенный пароль с той же солью
+        // - Сравнивает результаты
+        const isPasswordValid = await bcrypt.compare(
+            password,
+            user.password_hash
+        );
+
+        if (isPasswordValid) {
+            console.log("  Аутентификация успешна!");
+            console.log(`  ID пользователя: ${user.id}`);
+            console.log(`  Логин: ${user.login}`);
+            console.log(`  Зарегистрирован: ${user.created_at}`);
+            return true;
+        } else {
+            console.log("  Неверный пароль");
+            return false;
+        }
+    } catch (error) {
+        console.error("  Ошибка при аутентификации:", error.message);
+        return false;
+    }
+};
+
+/**
+ * Вывод всех пользователей (без паролей)
+ */
+const listAllUsers = async () => {
+    console.log("\n" + "=".repeat(50));
+    console.log("СПИСОК ВСЕХ ПОЛЬЗОВАТЕЛЕЙ");
     console.log("=".repeat(50));
 
     try {
-        const result = await db.query("SELECT * FROM users ORDER BY id");
+        const result = await db.query(
+            `SELECT id, login, created_at 
+             FROM auth_users 
+             ORDER BY id`
+        );
 
-        result.rows.forEach((user) => {
-            console.log(
-                `ID: ${user.id}, Name: ${user.name}, Email: ${user.email}, Age: ${user.age}, City: ${user.city}`
-            );
-        });
-    } catch (error) {
-        console.error("Error fetching users:", error.message);
-    }
-};
-
-const getUsersByCity = async (city) => {
-    console.log(`\nUsers from ${city}:`);
-    console.log("=".repeat(30));
-
-    try {
-        const result = await db.query("SELECT * FROM users WHERE city = $1", [
-            city,
-        ]);
-
-        if (result.rows.length > 0) {
+        if (result.rows.length === 0) {
+            console.log("Пользователи не найдены");
+        } else {
             result.rows.forEach((user) => {
                 console.log(
-                    `${user.name} (${user.email}) - ${user.age} years old`
+                    `ID: ${user.id} | Логин: ${user.login} | Создан: ${user.created_at}`
                 );
             });
-        } else {
-            console.log(`No users found in ${city}`);
         }
     } catch (error) {
-        console.error("Error fetching users by city:", error.message);
-    }
-};
-
-const updateUserAge = async (email, newAge) => {
-    console.log(`\nUpdating age for ${email}...`);
-
-    try {
-        const result = await db.query(
-            "UPDATE users SET age = $1 WHERE email = $2 RETURNING *",
-            [newAge, email]
+        console.error(
+            "Ошибка при получении списка пользователей:",
+            error.message
         );
-
-        if (result.rows.length > 0) {
-            const user = result.rows[0];
-            console.log(
-                `Age updated: ${user.name} is now ${user.age} years old`
-            );
-        } else {
-            console.log(`User with email ${email} not found`);
-        }
-    } catch (error) {
-        console.error("Error updating age:", error.message);
     }
 };
 
-const getAgeStatistics = async () => {
-    console.log("\nAge statistics:");
-    console.log("=".repeat(40));
+/**
+ * Демонстрация защиты от SQL-инъекций
+ */
+const demonstrateSqlInjectionProtection = async () => {
+    // Попытка SQL-инъекции
+    const maliciousLogin = "admin' OR '1'='1";
+    const maliciousPassword = "anything";
 
-    try {
-        const result = await db.query(`
-      SELECT 
-        COUNT(*) as total_users,
-        AVG(age) as average_age,
-        MIN(age) as min_age,
-        MAX(age) as max_age
-      FROM users
-    `);
+    const result = await authenticateUser(maliciousLogin, maliciousPassword);
 
-        const stats = result.rows[0];
-        console.log(`Total users: ${stats.total_users}`);
-        console.log(`Average age: ${Math.round(stats.average_age)} years`);
-        console.log(`Youngest: ${stats.min_age} years`);
-        console.log(`Oldest: ${stats.max_age} years`);
-    } catch (error) {
-        console.error("Error getting statistics:", error.message);
+    if (!result) {
+        console.log("\n Инъекция заблокирована");
     }
 };
 
-const getUsersByGroups = async () => {
-    console.log("\nUsers by cities:");
-    console.log("=".repeat(40));
-
-    try {
-        const result = await db.query(`
-      SELECT 
-        city, 
-        COUNT(*) as user_count,
-        AVG(age) as avg_age
-      FROM users 
-      GROUP BY city 
-      ORDER BY user_count DESC
-    `);
-
-        result.rows.forEach((row) => {
-            console.log(
-                `${row.city}: ${row.user_count} users (avg age: ${Math.round(row.avg_age)})`
-            );
-        });
-    } catch (error) {
-        console.error("Error grouping users:", error.message);
-    }
-};
-
-const deleteUser = async (email) => {
-    console.log(`\nDeleting user: ${email}`);
-
-    try {
-        const result = await db.query(
-            "DELETE FROM users WHERE email = $1 RETURNING *",
-            [email]
-        );
-
-        if (result.rows.length > 0) {
-            console.log(`User ${result.rows[0].name} deleted`);
-        } else {
-            console.log(`User with email ${email} not found`);
-        }
-    } catch (error) {
-        console.error("Error deleting user:", error.message);
-    }
-};
-
+/**
+ * Основная функция демонстрации
+ */
 const main = async () => {
-    console.log("Starting Node.js + PostgreSQL application\n");
-
     try {
-        await createTable();
-        await insertUsers();
-        await getAllUsers();
-        await getUsersByCity("Москва");
-        await updateUserAge("ivan@mail.ru", 26);
-        await getAgeStatistics();
-        await getUsersByGroups();
-        await deleteUser("alex@yandex.ru");
-        await getAllUsers();
+        // 1. Создание таблицы
+        await createUsersTable();
 
-        console.log("\nAll operations completed successfully!");
+        // 2. Регистрация пользователей
+        console.log("=".repeat(50));
+        console.log("РЕГИСТРАЦИЯ ПОЛЬЗОВАТЕЛЕЙ");
+        console.log("=".repeat(50));
+
+        await registerUser("admin", "AdminPass123!");
+        await registerUser("user1", "SecurePass456");
+        await registerUser("maria", "Пароль789");
+        await registerUser("admin", "AnotherPassword"); // Попытка дублирования
+
+        // 3. Вывод списка пользователей
+        await listAllUsers();
+
+        // 4. Успешная аутентификация
+        console.log("\n" + "=".repeat(50));
+        console.log("ТЕСТИРОВАНИЕ АУТЕНТИФИКАЦИИ");
+        console.log("=".repeat(50));
+
+        await authenticateUser("admin", "AdminPass123!");
+        await authenticateUser("user1", "SecurePass456");
+        await authenticateUser("maria", "Пароль789");
+
+        // 5. Неуспешные попытки аутентификации
+        console.log("\n" + "=".repeat(50));
+        console.log("ТЕСТИРОВАНИЕ НЕВЕРНЫХ ПАРОЛЕЙ");
+        console.log("=".repeat(50));
+
+        await authenticateUser("admin", "WrongPassword");
+        await authenticateUser("user1", "wrongpass");
+        await authenticateUser("nonexistent", "anypassword");
+
+        // 6. Демонстрация защиты от SQL-инъекций
+        await demonstrateSqlInjectionProtection();
+
+        console.log("\n" + "=".repeat(50));
+        console.log("  ВСЕ ОПЕРАЦИИ ВЫПОЛНЕНЫ УСПЕШНО!");
+        console.log("=".repeat(50));
     } catch (error) {
-        console.error("Critical error:", error.message);
+        console.error("\n  Критическая ошибка:", error.message);
     } finally {
         await db.end();
-        console.log("\nDatabase connection closed");
+        console.log("\n  Соединение с базой данных закрыто");
     }
 };
 
+// Запуск приложения
 main();
