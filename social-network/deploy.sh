@@ -132,8 +132,8 @@ set -e
 
 sudo tee /etc/nginx/sites-available/social-network > /dev/null << 'NGINX'
 server {
-    listen 8080;
-    listen [::]:8080;
+    listen 80;
+    listen [::]:80;
     server_name _;
 
     gzip on;
@@ -163,7 +163,7 @@ NGINXEOF
 
 echo -e "\n${BLUE}🔍 Проверка доступности...${NC}"
 sleep 3
-if curl -f -s -o /dev/null http://$SERVER_HOST:8080/; then
+if curl -f -s -o /dev/null http://$SERVER_HOST/; then
   echo -e "${GREEN}✅ API доступно!${NC}"
 else
   echo -e "${YELLOW}⚠️  API недоступно, проверяем логи...${NC}"
@@ -173,8 +173,8 @@ fi
 echo -e "\n${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${GREEN}✅ Деплой завершён!${NC}"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "\n${BLUE}🌐 API: ${GREEN}http://$SERVER_HOST:8080${NC}"
-echo -e "${BLUE}📚 Swagger: ${GREEN}http://$SERVER_HOST:8080/api${NC}"
+echo -e "\n${BLUE}🌐 API: ${GREEN}http://$SERVER_HOST${NC}"
+echo -e "${BLUE}📚 Swagger: ${GREEN}http://$SERVER_HOST/api${NC}"
 echo -e "\n${BLUE}🔑 Администратор:${NC}"
 echo -e "   Логин: ${GREEN}admin${NC}"
 echo -e "   Пароль: ${GREEN}admin123${NC}"
