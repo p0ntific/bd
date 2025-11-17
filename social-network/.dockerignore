@@ -1,0 +1,13 @@
+node_modules
+dist
+npm-debug.log
+.env
+.env.example
+.git
+.gitignore
+README.md
+deploy.sh
+*.tar.gz
+.DS_Store
+coverage
+.vscode
